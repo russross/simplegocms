@@ -1,0 +1,28 @@
+application: russross
+version: 3
+runtime: go
+api_version: 3
+
+handlers:
+- url: /favicon.ico
+  static_files: favicon.ico
+  upload: favicon.ico
+
+- url: /robots.txt
+  static_files: robots.txt
+  upload: robots.txt
+
+- url: /edit.*
+  login: required
+  script: _go_app
+
+- url: /save.*
+  login: required
+  script: _go_app
+
+- url: /config
+  login: required
+  script: _go_app
+
+- url: /.*
+  script: _go_app

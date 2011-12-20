@@ -1,0 +1,79 @@
+<h1>Pages</h1>
+
+<form id="newpageform">
+  <p>Name:
+  <input type="text" id="pagetitle" size="50"></input>
+  <input type="submit" value="New page"></input>
+  </p>
+</form>
+
+<ul>{{range .Pages}}
+  <li><a href="/edit/{{.}}">{{.}}</a></li>{{end}}
+</ul>
+
+<h1>Style sheets</h1>
+
+<form id="newstylesheetform">
+  <p>Name:
+  <input type="text" id="stylesheettitle" size="50"></input>
+  <input type="submit" value="New stylesheet"></input>
+  </p>
+</form>
+
+<ul>{{range .Stylesheets}}
+  <li><a href="/editstylesheet/{{.}}">{{.}}</a></li>{{end}}
+</ul>
+
+<h1>Templates</h1>
+
+<form id="newtemplateform">
+  <p>Name:
+  <input type="text" id="templatetitle" size="50"></input>
+  <input type="submit" value="New template"></input>
+  </p>
+</form>
+
+<ul>{{range .Templates}}
+  <li><a href="/edittemplate/{{.}}">{{.}}</a></li>{{end}}
+</ul>
+
+<script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js"></script>
+<script type="text/javascript">
+jQuery(function ($) {
+    var wikiUrl = function(name) {
+        name = name.replace(/%/g, "");
+        name = name.replace(/::/, "%%");
+        name = name.replace(/[^-%a-zA-Z0-9_ ]/g, "");
+        name = name.replace(/%%/, "::");
+        name = name.replace(/[- _]+/g, "_");
+        name = name.replace(/^_+/, "");
+        name = name.replace(/_+$/, "");
+        name = name.replace(/^./, function(s) { return s.toUpperCase(); });
+        return name;
+    };
+    var plainUrl = function(name) {
+        name = name.toLowerCase();
+        name = name.replace(/\.css$/, "");
+        name = name.replace(/[^a-z]/, "");
+        return name;
+    };
+    $('#newpageform').submit(function () {
+        var name = wikiUrl($('#pagetitle').val());
+        if (name != '')
+            location.href = '/edit/' + name;
+        return false;
+    });
+    $('#newstylesheetform').submit(function () {
+        var name = plainUrl($('#stylesheettitle').val());
+        if (name != '')
+            location.href = '/editstylesheet/' + name;
+        return false;
+    });
+    $('#newtemplateform').submit(function () {
+        var name = plainUrl($('#templatetitle').val());
+        if (name != '')
+            location.href = '/edittemplate/' + name;
+        return false;
+    });
+});
+</script>

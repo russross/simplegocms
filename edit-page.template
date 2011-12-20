@@ -1,0 +1,34 @@
+<form action="/savepage" method="post">
+<input type="hidden" name="Url" value="{{.Url}}" />
+
+<p>
+  Title: <input type="text" name="Title" size="50" value="{{.Title}}" />
+</p>
+
+<p>
+  Created: {{.Created.Time.Format "Mon, 02 Jan 2006 15:04:05 MST"}}<br />
+  <input type="hidden" name="Created" value="{{.Created}}" />
+</p>
+
+<p>
+  Modified: {{.Modified.Time.Format "Mon, 02 Jan 2006 15:04:05 MST"}}
+</p>
+
+<p>
+  Template: <select name="Template">{{$selected := .Template}}{{range .Templates}}
+  <option value="{{.}}"{{ifEqual . $selected ` selected="selected"`}}>{{.}}</option>{{end}}
+  </select>
+</p>
+
+<p>
+  Tags: <input type="text" name="Tags" size="70" value="{{range $i, $elt := .Tags}}{{if $i}},{{end}}{{.}}{{end}}" />
+</p>
+
+<h2>Contents</h2>
+<textarea name="Markdown" rows="30" cols="69">{{.Markdown}}</textarea>
+
+<p>
+  <input type="submit" name="Submit" value="Save" />
+  <input type="submit" name="Submit" value="Delete this page" />
+</p>
+</form>

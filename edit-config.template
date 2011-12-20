@@ -1,0 +1,43 @@
+<div class="box">
+<h1>Configuration</h1>
+
+<form method="post" action="/saveconfig">
+
+<h2>Authorized editors</h2>
+<p>A comma-separated list of gmail addresses of authorized content editors.</p>
+<p><input type="text" name="Editors" size="69" value="{{range $i, $elt := .Editors}}{{if $i}},{{end}}{{.}}{{end}}"></input></p>
+
+<p><input type="submit" name="submit" value="Save changes"></input></p>
+</form>
+</div>
+
+<div class="box">
+<h1>Upload pages</h1>
+
+<p>Upload a batch of pages at once. You should upload a <tt>.zip</tt> file
+containing a list of <tt>.md</tt> files, one per page. The URL of the
+page will be taken from the filename, and the rest of the page
+information will be taken from the file contents. The files should
+not be in a subdirectory.</p>
+
+<p>A file with extension <tt>foo.template</tt> will be interpreted as a
+template named <tt>foo</tt>. Anything with the extension <tt>.css</tt> will
+be interpreted as a stylesheet and imported accordingly.</p>
+
+<p>If this operation times out, repeat it. It will pick up where it
+left off and make additional progress each time.</p>
+
+<form method="post" action="/importpages" enctype="multipart/form-data">
+<input type="file" name="Zipfile"></input>
+<input type="submit" value="Upload"></input>
+</form>
+
+<h1>Download all pages</h1>
+
+<p>Download all pages in a single <tt>.zip</tt> file, suitable for uploading
+later. Good for backups. This exports pages, stylesheets, and templates.
+
+<form method="post" action="/exportpages">
+<input type="submit" value="Download"></input>
+</form>
+</div>
