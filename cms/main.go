@@ -1,4 +1,4 @@
-package russross
+package cms
 
 import (
 	"appengine"
@@ -19,10 +19,12 @@ import (
 )
 
 type Object interface {
+	Key() string
 	Validate() bool
 }
 
 type Page struct {
+	Host	string
 	Url       string
 	Title     string
 	Created   datastore.Time
@@ -34,9 +36,10 @@ type Page struct {
 	Rendered  string `datastore:"-"`
 }
 
-func NewPage(url string) *Page {
+func NewPage(host string, url string) *Page {
 	stamp := datastore.SecondsToTime(time.Seconds())
 	return &Page{
+		Host: host,
 		Url:      url,
 		Title:    strings.Replace(url, "_", " ", -1),
 		Created:  stamp,
@@ -58,7 +61,12 @@ func (p *Page) Validate() bool {
 	return true
 }
 
+func (p *Page) Key() string {
+	return p.Host + ":" + p.Url
+}
+
 type Template struct {
+	Host string
 	Url      string
 	Contents string
 }
@@ -71,7 +79,12 @@ func (t *Template) Validate() bool {
 	return true
 }
 
+func (t *Template) Key() string {
+	return t.Host + ":" + t.Url
+}
+
 type Stylesheet struct {
+	Host string
 	Url      string
 	Contents string
 }
@@ -82,6 +95,10 @@ func (s *Stylesheet) Validate() bool {
 		return false
 	}
 	return true
+}
+
+func (s *Stylesheet) Key() string {
+	return s.Host + ":" + s.Url
 }
 
 func cleanupLineEndings(s string) string {
@@ -97,11 +114,16 @@ type EditList struct {
 }
 
 type Config struct {
+	Host string
 	Editors []string
 }
 
 func (c *Config) Validate() bool {
 	return true
+}
+
+func (c *Config) Key() string {
+	return c.Host + ":" + "config"
 }
 
 const (
@@ -120,8 +142,8 @@ const (
 	import_prefix         = "/importpages"
 )
 
-// the set of all static templates
-var t *template.Set
+// the set of all global, static templates
+var staticTemplates *template.Set
 
 // if the first arguments match each other, return the last as a string
 func ifEqual(args ...interface{}) string {
@@ -138,11 +160,11 @@ func ifEqual(args ...interface{}) string {
 
 func init() {
 	// assign functions to the templates
-	t = new(template.Set)
-	t.Funcs(template.FuncMap{
+	staticTemplates = new(template.Set)
+	staticTemplates.Funcs(template.FuncMap{
 		"ifEqual": ifEqual,
 	})
-	template.SetMust(t.ParseTemplateGlob("*.template"))
+	template.SetMust(staticTemplates.ParseTemplateGlob("*.template"))
 
 	http.HandleFunc(viewpage_prefix, viewpage)
 
@@ -164,12 +186,12 @@ func init() {
 	http.HandleFunc(import_prefix, importpages)
 }
 
-func requireEditor(c appengine.Context) (err os.Error) {
+func requireEditor(c appengine.Context, host string) (err os.Error) {
 	if user.IsAdmin(c) {
 		return
 	}
 
-	config, err := getConfig(c)
+	config, err := getConfig(c, host)
 	if err != nil {
 		return
 	}
@@ -183,13 +205,14 @@ func requireEditor(c appengine.Context) (err os.Error) {
 			return
 		}
 	}
-	err = os.NewError("User not logged in as a valid editor")
+	err = os.NewError("User not logged in as a valid editor for " + host)
 	return
 }
 
-func getConfig(c appengine.Context) (*Config, os.Error) {
-	key := datastore.NewKey(c, "Config", "config", 0, nil)
+func getConfig(c appengine.Context, host string) (*Config, os.Error) {
+	key := datastore.NewKey(c, "Config", host, 0, nil)
 	value := &Config{
+		Host: host,
 		Editors: nil,
 	}
 	err := datastore.Get(c, key, value)
@@ -205,7 +228,7 @@ func render(c appengine.Context, w http.ResponseWriter, page *Page) (err os.Erro
 	success := false
 
 	// get the template
-	key := datastore.NewKey(c, "Template", page.Template, 0, nil)
+	key := datastore.NewKey(c, "Template", page.Host + ":" + page.Template, 0, nil)
 	tmpl := new(Template)
 	if err = datastore.Get(c, key, tmpl); err == nil {
 		parsed := template.New(tmpl.Url)
@@ -217,14 +240,14 @@ func render(c appengine.Context, w http.ResponseWriter, page *Page) (err os.Erro
 	}
 
 	if err != nil || !success {
-		fallback := t.Template("fallback.template")
+		fallback := staticTemplates.Template("fallback.template")
 		err = fallback.Execute(w, page)
 	}
 	return
 }
 
-func GetKeysList(c appengine.Context, table string) (lst []string, err os.Error) {
-	q := datastore.NewQuery(table).Order("Url")
+func GetKeysList(c appengine.Context, host string, table string) (lst []string, err os.Error) {
+	q := datastore.NewQuery(table).Filter("Host =", host).Order("Url")
 	q.KeysOnly()
 	keys, err := q.GetAll(c, nil)
 	if err != nil {
@@ -232,7 +255,7 @@ func GetKeysList(c appengine.Context, table string) (lst []string, err os.Error)
 	}
 	lst = make([]string, len(keys))
 	for i, elt := range keys {
-		lst[i] = elt.StringID()
+		lst[i] = elt.StringID()[len(host)+1:]
 	}
 	return
 }
@@ -243,32 +266,32 @@ func GetKeysList(c appengine.Context, table string) (lst []string, err os.Error)
 
 func editlist(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	err := requireEditor(c)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
 	}
 
 	data := new(EditList)
-	if data.Pages, err = GetKeysList(c, "Page"); err != nil {
+	if data.Pages, err = GetKeysList(c, r.URL.Host, "Page"); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
-	if data.Stylesheets, err = GetKeysList(c, "Stylesheet"); err != nil {
+	if data.Stylesheets, err = GetKeysList(c, r.URL.Host, "Stylesheet"); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
-	if data.Templates, err = GetKeysList(c, "Template"); err != nil {
+	if data.Templates, err = GetKeysList(c, r.URL.Host, "Template"); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
 
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, "edit-list.template", data); err != nil {
+	if err := staticTemplates.Execute(&buf, "edit-list.template", data); err != nil {
 		panic("Executing edit-list template")
 	}
 
-	page := NewPage("Edit_content")
+	page := NewPage(r.URL.Host, "Edit_content")
 	page.Rendered = string(buf.Bytes())
 	if err := render(c, w, page); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
@@ -286,14 +309,14 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 	if url == "" {
 		url = "Index"
 	}
-	page := NewPage(url)
+	page := NewPage(r.URL.Host, url)
 	if !page.Validate() {
 		http.Error(w, "Invalid page URL", http.StatusBadRequest)
 		return
 	}
 
 	// get the page
-	key := datastore.NewKey(c, "Page", page.Url, 0, nil)
+	key := datastore.NewKey(c, "Page", page.Key(), 0, nil)
 	err := datastore.Get(c, key, page)
 	if err != nil && err == datastore.ErrNoSuchEntity {
 		http.Error(w, "Page not found", http.StatusNotFound)
@@ -318,8 +341,8 @@ func viewstylesheet(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(url, ".css") {
 		url = url[:len(".css")]
 	}
-	sheet := &Stylesheet{Url: url}
-	key := datastore.NewKey(c, "Stylesheet", sheet.Url, 0, nil)
+	sheet := &Stylesheet{Host: r.URL.Host, Url: url}
+	key := datastore.NewKey(c, "Stylesheet", sheet.Key(), 0, nil)
 	err := datastore.Get(c, key, sheet)
 	if err != nil && err == datastore.ErrNoSuchEntity {
 		http.Error(w, "Page not found", http.StatusNotFound)
@@ -341,7 +364,7 @@ func viewstylesheet(w http.ResponseWriter, r *http.Request) {
 func save(w http.ResponseWriter, r *http.Request) {
 	// check permissions
 	c := appengine.NewContext(r)
-	err := requireEditor(c)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
@@ -354,16 +377,16 @@ func save(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case savepage_prefix:
 		table = "Page"
-		value = NewPage("")
+		value = NewPage(r.URL.Host, "")
 	case savestylesheet_prefix:
 		table = "Stylesheet"
-		value = &Stylesheet{}
+		value = &Stylesheet{Host: r.URL.Host}
 	case savetemplate_prefix:
 		table = "Template"
-		value = &Template{}
+		value = &Template{Host: r.URL.Host}
 	case saveconfig_prefix:
 		table = "Config"
-		value = &Config{}
+		value = &Config{Host: r.URL.Host}
 		if !user.IsAdmin(c) {
 			http.Error(w, "Must be logged in as an admin",
 					http.StatusUnauthorized)
@@ -384,13 +407,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var url string
-	if r.URL.Path == saveconfig_prefix {
-		url = "config"
-	} else {
-		url = r.FormValue("Url")
-	}
-	key := datastore.NewKey(c, table, url, 0, nil)
+	key := datastore.NewKey(c, table, value.Key(), 0, nil)
 
 	// delete request
 	if strings.HasPrefix(r.FormValue("Submit"), "Delete") {
@@ -410,7 +427,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 	}
 	target := "/edit"
 	if r.URL.Path == savepage_prefix {
-		target = "/" + url
+		target = "/" + r.FormValue("Url")
 	} else if r.URL.Path == saveconfig_prefix {
 		target = "/config"
 	}
@@ -420,7 +437,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 func edit(w http.ResponseWriter, r *http.Request) {
 	// only configured editors can edit
 	c := appengine.NewContext(r)
-	err := requireEditor(c)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
@@ -435,8 +452,8 @@ func edit(w http.ResponseWriter, r *http.Request) {
 		url = path[len(editpage_prefix):]
 		table = "Page"
 		form = "edit-page.template"
-		page := NewPage(url)
-		if page.Templates, err = GetKeysList(c, "Template"); err != nil {
+		page := NewPage(r.URL.Host, url)
+		if page.Templates, err = GetKeysList(c, r.URL.Host, "Template"); err != nil {
 			http.Error(w, err.String(), http.StatusInternalServerError)
 			return
 		}
@@ -445,17 +462,17 @@ func edit(w http.ResponseWriter, r *http.Request) {
 		url = path[len(editstylesheet_prefix):]
 		table = "Stylesheet"
 		form = "edit-stylesheet.template"
-		value = &Stylesheet{Url:url}
+		value = &Stylesheet{Host: r.URL.Host, Url:url}
 	case strings.HasPrefix(path, edittemplate_prefix):
 		url = path[len(edittemplate_prefix):]
 		table = "Template"
 		form = "edit-template.template"
-		value = &Template{Url:url}
+		value = &Template{Host: r.URL.Host, Url:url}
 	case path == editconfig_prefix:
 		url = "config"
 		table = "Config"
 		form = "edit-config.template"
-		value = &Config{}
+		value = &Config{Host: r.URL.Host}
 
 		// only admins can edit configuration
 		if !user.IsAdmin(c) {
@@ -472,7 +489,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid URL to edit", http.StatusBadRequest)
 		return
 	}
-	key := datastore.NewKey(c, table, url, 0, nil)
+	key := datastore.NewKey(c, table, value.Key(), 0, nil)
 	err = datastore.Get(c, key, value)
 	if err != nil && err == datastore.ErrNoSuchEntity {
 		// default empty entry is fine
@@ -483,13 +500,13 @@ func edit(w http.ResponseWriter, r *http.Request) {
 
 	// render the form
 	var buf bytes.Buffer
-	if err := t.Execute(&buf, form, value); err != nil {
+	if err := staticTemplates.Execute(&buf, form, value); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
 
 	// now render the page that holds the form
-	page := NewPage("")
+	page := NewPage(r.URL.Host, "")
 	page.Title = "Edit " + table + ": " + url
 	if r.URL.Path == editconfig_prefix {
 		page.Title = "Configuration"
@@ -550,7 +567,7 @@ func UnmarshalForm(r *http.Request, val interface{}) (err os.Error) {
 
 func exportpages(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	err := requireEditor(c)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
@@ -558,11 +575,8 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 
 	// headers
 	w.Header()["Content-Type"] = []string{"application/zip"}
-	filename := r.URL.Host
-	if strings.HasPrefix(filename, "www.") {
-		filename = filename[len("www."):]
-	}
-	filename += "-backup_" + time.UTC().Format("2006-01-02") + ".zip"
+	filename := r.URL.Host + "-backup_" +
+				  time.UTC().Format("2006-01-02") + ".zip"
 	w.Header()["Content-Disposition"] =
 		[]string{`attachment; filename="` + filename + `"`}
 
@@ -570,7 +584,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 
 	// pages
 	var page Page
-	for iter := datastore.NewQuery("Page").Run(c); ; {
+	for iter := datastore.NewQuery("Page").Filter("Host =", r.URL.Host).Run(c); ; {
 		_, err := iter.Next(&page)
 		if err == datastore.Done {
 			break
@@ -593,7 +607,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 
 	// stylesheets
 	var sheet Stylesheet
-	for iter := datastore.NewQuery("Stylesheet").Run(c); ; {
+	for iter := datastore.NewQuery("Stylesheet").Filter("Host =", r.URL.Host).Run(c); ; {
 		_, err := iter.Next(&sheet)
 		if err == datastore.Done {
 			break
@@ -616,7 +630,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 
 	// templates
 	var tmpl Template
-	for iter := datastore.NewQuery("Template").Run(c); ; {
+	for iter := datastore.NewQuery("Template").Filter("Host =", r.URL.Host).Run(c); ; {
 		_, err := iter.Next(&tmpl)
 		if err == datastore.Done {
 			break
@@ -653,8 +667,9 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 // 4:	Tags (comma-separated list)
 // 5:   ---
 // 6:   Markdown...
-func ParsePage(raw string, url string) (page *Page) {
+func ParsePage(host string, raw string, url string) (page *Page) {
 	page = new(Page)
+		page.Host = host
 
 	// normalize line endings
 	raw = strings.Replace(raw, "\r\n", "\n", -1)
@@ -752,7 +767,7 @@ func (b bytebuf) ReadAt(p []byte, off int64) (n int, err os.Error) {
 
 func importpages(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	err := requireEditor(c)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
@@ -791,12 +806,12 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 		// handle different file types
 		if strings.HasSuffix(elt.Name, ".md") && len(elt.Name) > len(".md") {
 			url := elt.Name[:len(elt.Name) - len(".md")]
-			page := ParsePage(contents, url)
+			page := ParsePage(r.URL.Host, contents, url)
 			if !page.Validate() {
 				report += "<li>Invalid name: " + elt.Name + "</ul>\n"
 				continue
 			}
-			key := datastore.NewKey(c, "Page", url, 0, nil)
+			key := datastore.NewKey(c, "Page", page.Key(), 0, nil)
 			if _, err = datastore.Put(c, key, page); err != nil {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return
@@ -804,12 +819,12 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 			report += "<li>Page: " + url + "</li>\n"
 		} else if strings.HasSuffix(elt.Name, ".css") && len(elt.Name) > len(".css") {
 			url := elt.Name[:len(elt.Name) - len(".css")]
-			sheet := &Stylesheet{ Url: url, Contents: contents }
+			sheet := &Stylesheet{ Host: r.URL.Host, Url: url, Contents: contents }
 			if !sheet.Validate() {
 				report += "<li>Invalid name: " + elt.Name + "</ul>\n"
 				continue
 			}
-			key := datastore.NewKey(c, "Stylesheet", url, 0, nil)
+			key := datastore.NewKey(c, "Stylesheet", sheet.Key(), 0, nil)
 			if _, err = datastore.Put(c, key, sheet); err != nil {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return
@@ -817,12 +832,12 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 			report += "<li>Stylesheet: " + url + "</li>\n"
 		} else if strings.HasSuffix(elt.Name, ".template") && len(elt.Name) > len(".template") {
 			url := elt.Name[:len(elt.Name) - len(".template")]
-			tmpl := &Template{ Url: url, Contents: contents }
+			tmpl := &Template{ Host: r.URL.Host, Url: url, Contents: contents }
 			if !tmpl.Validate() {
 				report += "<li>Invalid name: " + elt.Name + "</ul>\n"
 				continue
 			}
-			key := datastore.NewKey(c, "Template", url, 0, nil)
+			key := datastore.NewKey(c, "Template", tmpl.Key(), 0, nil)
 			if _, err = datastore.Put(c, key, tmpl); err != nil {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return
@@ -833,7 +848,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	report += "</ul>\n"
-	page := NewPage("Imported_data_report")
+	page := NewPage(r.URL.Host, "Imported_data_report")
 	page.Rendered = report
 	if err = render(c, w, page); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)

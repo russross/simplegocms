@@ -12,15 +12,7 @@ handlers:
   static_files: robots.txt
   upload: robots.txt
 
-- url: /edit.*
-  login: required
-  script: _go_app
-
-- url: /save.*
-  login: required
-  script: _go_app
-
-- url: /config
+- url: /(edit.*|save.*|config)
   login: required
   script: _go_app
 
