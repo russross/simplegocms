@@ -1,5 +1,5 @@
-application: russross
-version: 3
+application: nancyandruss
+version: 1
 runtime: go
 api_version: 3
 

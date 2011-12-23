@@ -2,11 +2,11 @@
 <html>
 <head>
 <meta http-equiv="content-type" content="text/html; charset=UTF-8"/>
-<title>{{.Title}}</title>
+<title>{{.Title | html}}</title>
 </head>
 
 <body>
-<h1>{{.Title}}</h1>
+<h1>{{.Title | html}}</h1>
 
 <div>
 {{.Rendered}}

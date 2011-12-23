@@ -5,7 +5,7 @@
 
 <h2>Authorized editors</h2>
 <p>A comma-separated list of gmail addresses of authorized content editors.</p>
-<p><input type="text" name="Editors" size="69" value="{{range $i, $elt := .Editors}}{{if $i}},{{end}}{{.}}{{end}}"></input></p>
+<p><input type="text" name="Editors" size="69" value="{{range $i, $elt := .Editors}}{{if $i}},{{end}}{{. | html}}{{end}}"></input></p>
 
 <p><input type="submit" name="submit" value="Save changes"></input></p>
 </form>

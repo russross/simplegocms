@@ -7,9 +7,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"github.com/russross/blackfriday"
+	"html"
 	"http"
 	"io"
 	"io/ioutil"
+	"mime"
 	"os"
 	"reflect"
 	"strconv"
@@ -18,25 +20,6 @@ import (
 	"time"
 	"utf8"
 )
-
-var r_URL_Host = "localhost.com"
-
-var MimeTypes = map[string]string{
-	"css":  "text/css",
-	"html": "text/html",
-	"xml":  "application/xml",
-	"js":   "application/javascript",
-	"json": "application/json",
-	"txt":  "text/plain",
-	"gif":  "image/gif",
-	"jpeg": "image/jpeg",
-	"jpg":  "image/jpeg",
-	"png":  "image/png",
-	"ico":  "image/x-icon",
-	"pdf":  "application/pdf",
-	"ps":   "application/ps",
-	"zip":  "application/zip",
-}
 
 type Object interface {
 	Key() string
@@ -57,9 +40,14 @@ type Page struct {
 
 func NewPage(url string) *Page {
 	stamp := datastore.SecondsToTime(time.Seconds())
+	title := strings.Replace(url, "_", " ", -1)
+	if slash := strings.LastIndex(url, "/"); slash >= 0 && len(title) > slash+1 {
+		title = title[slash+1:]
+	}
+	title = strings.Title(title)
 	return &Page{
 		Url:      url,
-		Title:    strings.Replace(url, "_", " ", -1),
+		Title:    title,
 		Created:  stamp,
 		Modified: stamp,
 		Template: "default",
@@ -72,8 +60,11 @@ func (p *Page) Render() {
 }
 
 func (p *Page) Validate() bool {
+	if len(p.Url) == 0 || strings.HasPrefix(p.Url, "/") || strings.Contains(p.Url, "//") {
+		return false
+	}
 	p.Markdown = cleanupLineEndings(p.Markdown)
-	return len(p.Url) > 0
+	return true
 }
 
 func (p *Page) Key() string {
@@ -86,8 +77,11 @@ type Template struct {
 }
 
 func (t *Template) Validate() bool {
+	if len(t.Url) == 0 || strings.HasPrefix(t.Url, "/") || strings.Contains(t.Url, "//") {
+		return false
+	}
 	t.Contents = cleanupLineEndings(t.Contents)
-	return len(t.Url) > 0
+	return true
 }
 
 func (t *Template) Key() string {
@@ -101,7 +95,10 @@ type Static struct {
 }
 
 func (s *Static) Validate() bool {
-	return len(s.Url) > 0
+	if len(s.Url) == 0 || strings.HasPrefix(s.Url, "/") || strings.Contains(s.Url, "//") {
+		return false
+	}
+	return true
 }
 
 func (s *Static) Key() string {
@@ -116,8 +113,8 @@ func cleanupLineEndings(s string) string {
 
 type EditList struct {
 	Pages     []string
-	Statics   []string
 	Templates []string
+	Statics   []string
 }
 
 type Config struct {
@@ -196,7 +193,7 @@ func init() {
 }
 
 func getConfig(c appengine.Context, host string) (*Config, os.Error) {
-	hostkey := datastore.NewKey(c, "Host", host, 0, nil)
+	hostkey := datastore.NewKey(c, "Host", host+"/", 0, nil)
 	key := datastore.NewKey(c, "Config", host, 0, hostkey)
 	value := new(Config)
 	err := datastore.Get(c, key, value)
@@ -233,7 +230,7 @@ func render(c appengine.Context, w http.ResponseWriter, host string, page *Page)
 	success := false
 
 	// get the template
-	hostkey := datastore.NewKey(c, "Host", host, 0, nil)
+	hostkey := datastore.NewKey(c, "Host", host+"/", 0, nil)
 	key := datastore.NewKey(c, "Template", page.Template, 0, hostkey)
 	tmpl := new(Template)
 	if err = datastore.Get(c, key, tmpl); err == nil {
@@ -253,7 +250,7 @@ func render(c appengine.Context, w http.ResponseWriter, host string, page *Page)
 }
 
 func GetKeysList(c appengine.Context, host string, table string) (lst []string, err os.Error) {
-	hostkey := datastore.NewKey(c, "Host", host, 0, nil)
+	hostkey := datastore.NewKey(c, "Host", host+"/", 0, nil)
 	q := datastore.NewQuery(table).Ancestor(hostkey).Order("Url")
 	q.KeysOnly()
 	keys, err := q.GetAll(c, nil)
@@ -273,22 +270,22 @@ func GetKeysList(c appengine.Context, host string, table string) (lst []string, 
 
 func editlist(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	err := requireEditor(c, r_URL_Host)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
 	}
 
 	data := new(EditList)
-	if data.Pages, err = GetKeysList(c, r_URL_Host, "Page"); err != nil {
+	if data.Pages, err = GetKeysList(c, r.URL.Host, "Page"); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
-	if data.Statics, err = GetKeysList(c, r_URL_Host, "Static"); err != nil {
+	if data.Templates, err = GetKeysList(c, r.URL.Host, "Template"); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
-	if data.Templates, err = GetKeysList(c, r_URL_Host, "Template"); err != nil {
+	if data.Statics, err = GetKeysList(c, r.URL.Host, "Static"); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
@@ -300,7 +297,7 @@ func editlist(w http.ResponseWriter, r *http.Request) {
 
 	page := NewPage("Edit_content")
 	page.Rendered = string(buf.Bytes())
-	if err := render(c, w, r_URL_Host, page); err != nil {
+	if err := render(c, w, r.URL.Host, page); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
@@ -316,7 +313,7 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 	if url == "" {
 		url = "index"
 	}
-	hostkey := datastore.NewKey(c, "Host", r_URL_Host, 0, nil)
+	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
 
 	// check for a static first
 	static := &Static{Url: url}
@@ -327,10 +324,12 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if err == nil {
 		// guess the MIME type based on the extension
-		if dot := strings.LastIndex(static.Url, "."); dot > 0 && len(static.Url) > dot+1 {
-			ext := static.Url[dot+1:]
-			if mime, present := MimeTypes[strings.ToLower(ext)]; present {
-				w.Header()["Content-Type"] = []string{mime}
+		if dot := strings.LastIndex(static.Url, "."); dot >= 0 && len(static.Url) > dot+1 {
+			ext := static.Url[dot:]
+			if mimetype := mime.TypeByExtension(ext); mimetype != "" {
+				w.Header()["Content-Type"] = []string{mimetype}
+			} else {
+				w.Header()["Content-Type"] = []string{http.DetectContentType(static.Contents)}
 			}
 		}
 		w.Write(static.Contents)
@@ -348,14 +347,14 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 	key = datastore.NewKey(c, "Page", page.Key(), 0, hostkey)
 	err = datastore.Get(c, key, page)
 	if err != nil && err == datastore.ErrNoSuchEntity {
-		http.Error(w, "Page not found", http.StatusNotFound)
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	} else if err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
 	page.Render()
-	if err = render(c, w, r_URL_Host, page); err != nil {
+	if err = render(c, w, r.URL.Host, page); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 	}
 }
@@ -367,7 +366,7 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 func save(w http.ResponseWriter, r *http.Request) {
 	// check permissions
 	c := appengine.NewContext(r)
-	err := requireEditor(c, r_URL_Host)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
@@ -396,7 +395,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		http.Error(w, "Page not found", http.StatusNotFound)
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
 
@@ -410,7 +409,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hostkey := datastore.NewKey(c, "Host", r_URL_Host, 0, nil)
+	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
 	key := datastore.NewKey(c, table, value.Key(), 0, hostkey)
 
 	// delete request
@@ -452,7 +451,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 func edit(w http.ResponseWriter, r *http.Request) {
 	// only configured editors can edit
 	c := appengine.NewContext(r)
-	err := requireEditor(c, r_URL_Host)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
@@ -468,7 +467,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 		table = "Page"
 		form = "edit-page.template"
 		page := NewPage(url)
-		if page.Templates, err = GetKeysList(c, r_URL_Host, "Template"); err != nil {
+		if page.Templates, err = GetKeysList(c, r.URL.Host, "Template"); err != nil {
 			http.Error(w, err.String(), http.StatusInternalServerError)
 			return
 		}
@@ -495,7 +494,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		http.Error(w, "Page not found", http.StatusNotFound)
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
 
@@ -504,7 +503,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid URL to edit", http.StatusBadRequest)
 		return
 	}
-	hostkey := datastore.NewKey(c, "Host", r_URL_Host, 0, nil)
+	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
 	key := datastore.NewKey(c, table, value.Key(), 0, hostkey)
 	err = datastore.Get(c, key, value)
 	if err != nil && err == datastore.ErrNoSuchEntity {
@@ -546,7 +545,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 		page.Title = "Configuration"
 	}
 	page.Rendered = string(buf.Bytes())
-	if err := render(c, w, r_URL_Host, page); err != nil {
+	if err := render(c, w, r.URL.Host, page); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
@@ -619,7 +618,7 @@ func UnmarshalForm(r *http.Request, val interface{}) (err os.Error) {
 
 func exportpages(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	err := requireEditor(c, r_URL_Host)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
@@ -627,13 +626,13 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 
 	// headers
 	w.Header()["Content-Type"] = []string{"application/zip"}
-	filename := r_URL_Host + "-backup_" +
+	filename := r.URL.Host + "-backup_" +
 		time.UTC().Format("2006-01-02") + ".zip"
 	w.Header()["Content-Disposition"] =
 		[]string{`attachment; filename="` + filename + `"`}
 
 	z := zip.NewWriter(w)
-	hostkey := datastore.NewKey(c, "Host", r_URL_Host, 0, nil)
+	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
 
 	// pages
 	var page Page
@@ -819,7 +818,7 @@ func (b bytebuf) ReadAt(p []byte, off int64) (n int, err os.Error) {
 
 func importpages(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	err := requireEditor(c, r_URL_Host)
+	err := requireEditor(c, r.URL.Host)
 	if err != nil {
 		http.Error(w, err.String(), http.StatusUnauthorized)
 		return
@@ -840,17 +839,19 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.String(), http.StatusBadRequest)
 		return
 	}
-	hostkey := datastore.NewKey(c, "Host", r_URL_Host, 0, nil)
+	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
 	report := "<h1>Imported files</h1>\n<ul>\n"
 	for _, elt := range z.File {
 		fp, err := elt.Open()
 		if err != nil {
-			report += "<li>Error opening " + elt.Name + ": " + err.String() + "</li>\n"
+			report += "<li>Error opening " + html.EscapeString(elt.Name) + ": " +
+				html.EscapeString(err.String()) + "</li>\n"
 			continue
 		}
 		data, err := ioutil.ReadAll(fp)
 		if err != nil {
-			report += "<li>Error reading " + elt.Name + ": " + err.String() + "</li>\n"
+			report += "<li>Error reading " + html.EscapeString(elt.Name) + ": " +
+				html.EscapeString(err.String()) + "</li>\n"
 			continue
 		}
 		fp.Close()
@@ -860,7 +861,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 			url := elt.Name[:len(elt.Name)-len(".md")]
 			page := ParsePage(string(data), url)
 			if !page.Validate() {
-				report += "<li>Invalid name: " + elt.Name + "</ul>\n"
+				report += "<li>Invalid name: " + html.EscapeString(elt.Name) + "</ul>\n"
 				continue
 			}
 			key := datastore.NewKey(c, "Page", page.Key(), 0, hostkey)
@@ -868,12 +869,12 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return
 			}
-			report += "<li>Page: " + url + "</li>\n"
+			report += "<li>Page: " + html.EscapeString(url) + "</li>\n"
 		} else if strings.HasSuffix(elt.Name, ".template") && len(elt.Name) > len(".template") {
 			url := elt.Name[:len(elt.Name)-len(".template")]
 			tmpl := &Template{Url: url, Contents: string(data)}
 			if !tmpl.Validate() {
-				report += "<li>Invalid name: " + elt.Name + "</ul>\n"
+				report += "<li>Invalid name: " + html.EscapeString(elt.Name) + "</ul>\n"
 				continue
 			}
 			key := datastore.NewKey(c, "Template", tmpl.Key(), 0, hostkey)
@@ -881,12 +882,12 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return
 			}
-			report += "<li>Template: " + url + "</li>\n"
-		} else if strings.HasSuffix(elt.Name, ".css") && len(elt.Name) > len(".css") {
-			url := elt.Name[:len(elt.Name)-len(".css")]
+			report += "<li>Template: " + html.EscapeString(url) + "</li>\n"
+		} else if !strings.HasSuffix(elt.Name, "/") || len(data) > 0 {
+			url := elt.Name
 			static := &Static{Url: url, Contents: data}
 			if !static.Validate() {
-				report += "<li>Invalid name: " + elt.Name + "</ul>\n"
+				report += "<li>Invalid name: " + html.EscapeString(elt.Name) + "</ul>\n"
 				continue
 			}
 			key := datastore.NewKey(c, "Static", static.Key(), 0, hostkey)
@@ -894,15 +895,15 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return
 			}
-			report += "<li>Static: " + url + "</li>\n"
+			report += "<li>Static: " + html.EscapeString(url) + "</li>\n"
 		} else {
-			report += "<li>Skipping unknown file: " + elt.Name + "</li>\n"
+			report += "<li>Skipping directory: " + html.EscapeString(elt.Name) + "</li>\n"
 		}
 	}
 	report += "</ul>\n"
 	page := NewPage("Imported_data_report")
 	page.Rendered = report
-	if err = render(c, w, r_URL_Host, page); err != nil {
+	if err = render(c, w, r.URL.Host, page); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}

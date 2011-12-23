@@ -8,7 +8,7 @@
 </form>
 
 <ul>{{range .Pages}}
-  <li><a href="/_edit/{{.}}">{{.}}</a></li>{{end}}
+  <li><a href="/_edit/{{. | html}}">{{. | html}}</a></li>{{end}}
 </ul>
 
 <h1>Static objects</h1>
@@ -21,7 +21,7 @@
 </form>
 
 <ul>{{range .Statics}}
-  <li><a href="/_editstatic/{{.}}">{{.}}</a></li>{{end}}
+  <li><a href="/_editstatic/{{. | html}}">{{. | html}}</a></li>{{end}}
 </ul>
 
 <h1>Templates</h1>
@@ -34,7 +34,7 @@
 </form>
 
 <ul>{{range .Templates}}
-  <li><a href="/_edittemplate/{{.}}">{{.}}</a></li>{{end}}
+  <li><a href="/_edittemplate/{{. | html}}">{{. | html}}</a></li>{{end}}
 </ul>
 
 <h1>Upload pages</h1>
@@ -66,10 +66,8 @@ later. Good for backups. This exports pages, stylesheets, and templates.
 <script type="text/javascript">
 jQuery(function ($) {
     var simplifyUrl = function(name) {
-        name = name.replace(/[^-a-zA-Z0-9_ \.\/]/g, "");
-        name = name.replace(/[- _]+/g, "_");
-        name = name.replace(/^_+/, "");
-        name = name.replace(/_+$/, "");
+		name = name.replace(/\/\/*/g, "/");
+		name = name.replace(/^\//, "");
         return name;
     };
     $('#newpageform').submit(function () {

@@ -1,9 +1,9 @@
 <form action="/_savetemplate" method="post">
-<input type="hidden" name="Url" value="{{.Url}}" />
+<input type="hidden" name="Url" value="{{.Url | html}}" />
 
 <h2>Contents</h2>
 
-<textarea name="Contents" rows="30" cols="69">{{.Contents}}</textarea>
+<textarea name="Contents" rows="30" cols="69">{{.Contents | html}}</textarea>
 
 <p>
   <input type="submit" name="Submit" value="Save" />
