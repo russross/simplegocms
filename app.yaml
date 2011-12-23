@@ -4,15 +4,11 @@ runtime: go
 api_version: 3
 
 handlers:
-- url: /favicon.ico
-  static_files: favicon.ico
-  upload: favicon.ico
+- url: /_config
+  login: admin
+  script: _go_app
 
-- url: /robots.txt
-  static_files: robots.txt
-  upload: robots.txt
-
-- url: /(edit.*|save.*|config)
+- url: /_.*
   login: required
   script: _go_app
 

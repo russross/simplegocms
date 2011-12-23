@@ -1,0 +1,20 @@
+<form action="/_savestatic" method="post" enctype="multipart/form-data">
+<input type="hidden" name="Url" value="{{.Url}}" />
+
+<h2>Contents</h2>
+
+<p>If the file looks like valid utf-8, you can edit it directly here:</p>
+
+<textarea name="Text" rows="30" cols="69">{{.Text}}</textarea>
+
+<p>To download the file for offline editing, <a href="/{{.Url}}">click here</a>.</p>
+
+<p>Upload the file here (overrides the edit box):</p>
+
+<input type="file" name="Contents"></input>
+
+<p>
+  <input type="submit" name="Submit" value="Save" />
+  <input type="submit" name="Submit" value="Delete this object" /></p>
+</p>
+</form>

@@ -8,20 +8,20 @@
 </form>
 
 <ul>{{range .Pages}}
-  <li><a href="/edit/{{.}}">{{.}}</a></li>{{end}}
+  <li><a href="/_edit/{{.}}">{{.}}</a></li>{{end}}
 </ul>
 
-<h1>Style sheets</h1>
+<h1>Static objects</h1>
 
-<form id="newstylesheetform">
+<form id="newstaticform">
   <p>Name:
-  <input type="text" id="stylesheettitle" size="50"></input>
-  <input type="submit" value="New stylesheet"></input>
+  <input type="text" id="statictitle" size="50"></input>
+  <input type="submit" value="New static"></input>
   </p>
 </form>
 
-<ul>{{range .Stylesheets}}
-  <li><a href="/editstylesheet/{{.}}">{{.}}</a></li>{{end}}
+<ul>{{range .Statics}}
+  <li><a href="/_editstatic/{{.}}">{{.}}</a></li>{{end}}
 </ul>
 
 <h1>Templates</h1>
@@ -34,45 +34,60 @@
 </form>
 
 <ul>{{range .Templates}}
-  <li><a href="/edittemplate/{{.}}">{{.}}</a></li>{{end}}
+  <li><a href="/_edittemplate/{{.}}">{{.}}</a></li>{{end}}
 </ul>
+
+<h1>Upload pages</h1>
+
+<p>Upload a batch of pages at once. You should upload a <tt>.zip</tt> file
+containing a list of <tt>.md</tt> files, one per page. The URL of the
+page will be taken from the filename, and the rest of the page
+information will be taken from the file contents. If the files are in
+subdirectories, those names will be part of the URL.</p>
+
+<p>A file named <tt>foo.template</tt> will be interpreted as a
+template named <tt>foo</tt>.
+
+<form method="post" action="/_importpages" enctype="multipart/form-data">
+<input type="file" name="Zipfile"></input>
+<input type="submit" value="Upload"></input>
+</form>
+
+<h1>Download all pages</h1>
+
+<p>Download all pages in a single <tt>.zip</tt> file, suitable for uploading
+later. Good for backups. This exports pages, stylesheets, and templates.
+
+<form method="post" action="/_exportpages">
+<input type="submit" value="Download"></input>
+</form>
 
 <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js"></script>
 <script type="text/javascript">
 jQuery(function ($) {
-    var wikiUrl = function(name) {
-        name = name.replace(/%/g, "");
-        name = name.replace(/::/, "%%");
-        name = name.replace(/[^-%a-zA-Z0-9_ ]/g, "");
-        name = name.replace(/%%/, "::");
+    var simplifyUrl = function(name) {
+        name = name.replace(/[^-a-zA-Z0-9_ \.\/]/g, "");
         name = name.replace(/[- _]+/g, "_");
         name = name.replace(/^_+/, "");
         name = name.replace(/_+$/, "");
-        name = name.replace(/^./, function(s) { return s.toUpperCase(); });
-        return name;
-    };
-    var plainUrl = function(name) {
-        name = name.toLowerCase();
-        name = name.replace(/\.css$/, "");
-        name = name.replace(/[^a-z]/, "");
         return name;
     };
     $('#newpageform').submit(function () {
-        var name = wikiUrl($('#pagetitle').val());
+        var name = simplifyUrl($('#pagetitle').val());
         if (name != '')
-            location.href = '/edit/' + name;
+            location.href = '/_edit/' + name;
         return false;
     });
-    $('#newstylesheetform').submit(function () {
-        var name = plainUrl($('#stylesheettitle').val());
+    $('#newstaticform').submit(function () {
+        var name = simplifyUrl($('#statictitle').val());
         if (name != '')
-            location.href = '/editstylesheet/' + name;
+            location.href = '/_editstatic/' + name;
         return false;
     });
     $('#newtemplateform').submit(function () {
-        var name = plainUrl($('#templatetitle').val());
+        var name = simplifyUrl($('#templatetitle').val());
         if (name != '')
-            location.href = '/edittemplate/' + name;
+            location.href = '/_edittemplate/' + name;
         return false;
     });
 });

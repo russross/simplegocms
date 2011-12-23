@@ -1,4 +1,4 @@
-<form action="/savetemplate" method="post">
+<form action="/_savetemplate" method="post">
 <input type="hidden" name="Url" value="{{.Url}}" />
 
 <h2>Contents</h2>

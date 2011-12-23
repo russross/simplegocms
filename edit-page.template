@@ -1,4 +1,4 @@
-<form action="/savepage" method="post">
+<form action="/_savepage" method="post">
 <input type="hidden" name="Url" value="{{.Url}}" />
 
 <p>
