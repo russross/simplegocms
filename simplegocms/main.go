@@ -1,4 +1,4 @@
-package cms
+package simplegocms
 
 import (
 	"appengine"
@@ -18,6 +18,7 @@ import (
 	"strings"
 	"template"
 	"time"
+	"url"
 	"utf8"
 )
 
@@ -616,6 +617,24 @@ func UnmarshalForm(r *http.Request, val interface{}) (err os.Error) {
 // Bulk import/export
 //
 
+func escapeUrl(s string) string {
+	parts := strings.Split(s, "/")
+	for i, elt := range parts {
+		parts[i] = url.QueryEscape(elt)
+	}
+	return strings.Join(parts, "/")
+}
+
+func unescapeUrl(s string) string {
+	parts := strings.Split(s, "/")
+	for i, elt := range parts {
+		if orig, err := url.QueryUnescape(elt); err == nil {
+			parts[i] = orig
+		}
+	}
+	return strings.Join(parts, "/")
+}
+
 func exportpages(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	err := requireEditor(c, r.URL.Host)
@@ -645,7 +664,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.String(), http.StatusInternalServerError)
 			return
 		}
-		out, err := z.Create(page.Url + ".md")
+		out, err := z.Create(escapeUrl(page.Url + ".md"))
 		if err != nil {
 			http.Error(w, err.String(), http.StatusInternalServerError)
 			return
@@ -668,7 +687,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.String(), http.StatusInternalServerError)
 			return
 		}
-		out, err := z.Create(static.Url)
+		out, err := z.Create(escapeUrl(static.Url))
 		if err != nil {
 			http.Error(w, err.String(), http.StatusInternalServerError)
 			return
@@ -691,7 +710,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.String(), http.StatusInternalServerError)
 			return
 		}
-		out, err := z.Create(tmpl.Url + ".template")
+		out, err := z.Create(escapeUrl(tmpl.Url + ".template"))
 		if err != nil {
 			http.Error(w, err.String(), http.StatusInternalServerError)
 			return
@@ -842,26 +861,27 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
 	report := "<h1>Imported files</h1>\n<ul>\n"
 	for _, elt := range z.File {
+		name := unescapeUrl(elt.Name)
 		fp, err := elt.Open()
 		if err != nil {
-			report += "<li>Error opening " + html.EscapeString(elt.Name) + ": " +
+			report += "<li>Error opening " + html.EscapeString(name) + ": " +
 				html.EscapeString(err.String()) + "</li>\n"
 			continue
 		}
 		data, err := ioutil.ReadAll(fp)
 		if err != nil {
-			report += "<li>Error reading " + html.EscapeString(elt.Name) + ": " +
+			report += "<li>Error reading " + html.EscapeString(name) + ": " +
 				html.EscapeString(err.String()) + "</li>\n"
 			continue
 		}
 		fp.Close()
 
 		// handle different file types
-		if strings.HasSuffix(elt.Name, ".md") && len(elt.Name) > len(".md") {
-			url := elt.Name[:len(elt.Name)-len(".md")]
+		if strings.HasSuffix(name, ".md") && len(name) > len(".md") {
+			url := name[:len(name)-len(".md")]
 			page := ParsePage(string(data), url)
 			if !page.Validate() {
-				report += "<li>Invalid name: " + html.EscapeString(elt.Name) + "</ul>\n"
+				report += "<li>Invalid name: " + html.EscapeString(name) + "</ul>\n"
 				continue
 			}
 			key := datastore.NewKey(c, "Page", page.Key(), 0, hostkey)
@@ -870,11 +890,11 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			report += "<li>Page: " + html.EscapeString(url) + "</li>\n"
-		} else if strings.HasSuffix(elt.Name, ".template") && len(elt.Name) > len(".template") {
-			url := elt.Name[:len(elt.Name)-len(".template")]
+		} else if strings.HasSuffix(name, ".template") && len(name) > len(".template") {
+			url := name[:len(name)-len(".template")]
 			tmpl := &Template{Url: url, Contents: string(data)}
 			if !tmpl.Validate() {
-				report += "<li>Invalid name: " + html.EscapeString(elt.Name) + "</ul>\n"
+				report += "<li>Invalid name: " + html.EscapeString(name) + "</ul>\n"
 				continue
 			}
 			key := datastore.NewKey(c, "Template", tmpl.Key(), 0, hostkey)
@@ -883,11 +903,11 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			report += "<li>Template: " + html.EscapeString(url) + "</li>\n"
-		} else if !strings.HasSuffix(elt.Name, "/") || len(data) > 0 {
-			url := elt.Name
+		} else if !strings.HasSuffix(name, "/") || len(data) > 0 {
+			url := name
 			static := &Static{Url: url, Contents: data}
 			if !static.Validate() {
-				report += "<li>Invalid name: " + html.EscapeString(elt.Name) + "</ul>\n"
+				report += "<li>Invalid name: " + html.EscapeString(name) + "</ul>\n"
 				continue
 			}
 			key := datastore.NewKey(c, "Static", static.Key(), 0, hostkey)
@@ -897,7 +917,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 			}
 			report += "<li>Static: " + html.EscapeString(url) + "</li>\n"
 		} else {
-			report += "<li>Skipping directory: " + html.EscapeString(elt.Name) + "</li>\n"
+			report += "<li>Skipping directory: " + html.EscapeString(name) + "</li>\n"
 		}
 	}
 	report += "</ul>\n"
