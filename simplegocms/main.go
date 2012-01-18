@@ -25,6 +25,8 @@ import (
 type Object interface {
 	Key() string
 	Validate() bool
+	PreSave()
+	PostLoad()
 }
 
 type Page struct {
@@ -35,7 +37,8 @@ type Page struct {
 	Template  string
 	Templates []string `datastore:"-"`
 	Tags      []string
-	Markdown  string
+	Markdown  string `datastore:"-"`
+	MarkdownBytes []byte // strings are limited to 500 chars
 	Rendered  string `datastore:"-"`
 }
 
@@ -53,6 +56,7 @@ func NewPage(url string) *Page {
 		Modified: stamp,
 		Template: "default",
 		Markdown: "\n",
+		MarkdownBytes: []byte("\n"),
 	}
 }
 
@@ -72,9 +76,18 @@ func (p *Page) Key() string {
 	return p.Url
 }
 
+func (p *Page) PreSave() {
+	p.MarkdownBytes = []byte(p.Markdown)
+}
+
+func (p *Page) PostLoad() {
+	p.Markdown = string(p.MarkdownBytes)
+}
+
 type Template struct {
 	Url      string
-	Contents string
+	Contents string `datastore:"-"`
+	ContentsBytes []byte
 }
 
 func (t *Template) Validate() bool {
@@ -87,6 +100,14 @@ func (t *Template) Validate() bool {
 
 func (t *Template) Key() string {
 	return t.Url
+}
+
+func (t *Template) PreSave() {
+	t.ContentsBytes = []byte(t.Contents)
+}
+
+func (t *Template) PostLoad() {
+	t.Contents = string(t.ContentsBytes)
 }
 
 type Static struct {
@@ -104,6 +125,12 @@ func (s *Static) Validate() bool {
 
 func (s *Static) Key() string {
 	return s.Url
+}
+
+func (s *Static) PreSave() {
+}
+
+func (s *Static) PostLoad() {
 }
 
 func cleanupLineEndings(s string) string {
@@ -128,6 +155,12 @@ func (c *Config) Validate() bool {
 
 func (c *Config) Key() string {
 	return "config"
+}
+
+func (c *Config) PreSave() {
+}
+
+func (c *Config) PostLoad() {
 }
 
 // the set of all built-in templates
@@ -203,6 +236,7 @@ func getConfig(c appengine.Context, host string) (*Config, os.Error) {
 	} else if err != nil {
 		return nil, err
 	}
+	value.PostLoad()
 	return value, nil
 }
 
@@ -224,7 +258,7 @@ func requireEditor(c appengine.Context, host string) (err os.Error) {
 			return
 		}
 	}
-	return os.NewError("User not logged in as a valid editor for " + host)
+	return os.NewError("User " + u.Email + " is not an editor for " + host)
 }
 
 func render(c appengine.Context, w http.ResponseWriter, host string, page *Page) (err os.Error) {
@@ -235,6 +269,7 @@ func render(c appengine.Context, w http.ResponseWriter, host string, page *Page)
 	key := datastore.NewKey(c, "Template", page.Template, 0, hostkey)
 	tmpl := new(Template)
 	if err = datastore.Get(c, key, tmpl); err == nil {
+		tmpl.PostLoad()
 		parsed := template.New(tmpl.Url)
 		if _, err = parsed.Parse(tmpl.Contents); err == nil {
 			if err = parsed.Execute(w, page); err == nil {
@@ -311,8 +346,8 @@ func editlist(w http.ResponseWriter, r *http.Request) {
 func viewpage(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	url := r.URL.Path[len(viewpage_prefix):]
-	if url == "" {
-		url = "index"
+	if url == "" || strings.HasSuffix(url, "/") {
+		url += "index"
 	}
 	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
 
@@ -324,6 +359,8 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	} else if err == nil {
+		static.PostLoad()
+
 		// guess the MIME type based on the extension
 		if dot := strings.LastIndex(static.Url, "."); dot >= 0 && len(static.Url) > dot+1 {
 			ext := static.Url[dot:]
@@ -354,6 +391,7 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
+	page.PostLoad()
 	page.Render()
 	if err = render(c, w, r.URL.Host, page); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
@@ -436,6 +474,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 			static.Contents = []byte(cleanupLineEndings(static.Text))
 		}
 	}
+	value.PreSave()
 	if _, err = datastore.Put(c, key, value); err != nil {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
@@ -513,6 +552,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.String(), http.StatusInternalServerError)
 		return
 	}
+	value.PostLoad()
 
 	// for statics, try to decide if it is text or not
 	if strings.HasPrefix(r.URL.Path, editstatic_prefix) {
@@ -885,6 +925,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			key := datastore.NewKey(c, "Page", page.Key(), 0, hostkey)
+			page.PreSave()
 			if _, err = datastore.Put(c, key, page); err != nil {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return
@@ -898,6 +939,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			key := datastore.NewKey(c, "Template", tmpl.Key(), 0, hostkey)
+			tmpl.PreSave()
 			if _, err = datastore.Put(c, key, tmpl); err != nil {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return
@@ -911,6 +953,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			key := datastore.NewKey(c, "Static", static.Key(), 0, hostkey)
+			static.PreSave()
 			if _, err = datastore.Put(c, key, static); err != nil {
 				http.Error(w, err.String(), http.StatusInternalServerError)
 				return

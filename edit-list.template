@@ -2,7 +2,7 @@
 
 <form id="newpageform">
   <p>Name:
-  <input type="text" id="pagetitle" size="50"></input>
+  <input type="text" id="pagetitle" size="70"></input>
   <input type="submit" value="New page"></input>
   </p>
 </form>
@@ -15,7 +15,7 @@
 
 <form id="newstaticform">
   <p>Name:
-  <input type="text" id="statictitle" size="50"></input>
+  <input type="text" id="statictitle" size="70"></input>
   <input type="submit" value="New static"></input>
   </p>
 </form>
@@ -28,7 +28,7 @@
 
 <form id="newtemplateform">
   <p>Name:
-  <input type="text" id="templatetitle" size="50"></input>
+  <input type="text" id="templatetitle" size="70"></input>
   <input type="submit" value="New template"></input>
   </p>
 </form>
@@ -56,7 +56,7 @@ template named <tt>foo</tt>.
 <h1>Download all pages</h1>
 
 <p>Download all pages in a single <tt>.zip</tt> file, suitable for uploading
-later. Good for backups. This exports pages, stylesheets, and templates.
+later. Good for backups. This exports pages, static objects, and templates.
 
 <form method="post" action="/_exportpages">
 <input type="submit" value="Download"></input>
@@ -68,6 +68,7 @@ jQuery(function ($) {
     var simplifyUrl = function(name) {
 		name = name.replace(/\/\/*/g, "/");
 		name = name.replace(/^\//, "");
+                name = name.replace(/\/$/, "/index");
         return name;
     };
     $('#newpageform').submit(function () {
