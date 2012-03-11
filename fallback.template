@@ -13,7 +13,7 @@
 </div>
 
 <div>
-<em>Last updated {{.Modified.Time.Format "Monday, January 2, 2006"}}</em>
+<em>Last updated {{.Modified.Format "Monday, January 2, 2006"}}</em>
 </div>
 </body>
 </html>

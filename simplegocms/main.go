@@ -6,20 +6,20 @@ import (
 	"appengine/user"
 	"archive/zip"
 	"bytes"
+	"errors"
 	"github.com/russross/blackfriday"
 	"html"
-	"http"
 	"io"
 	"io/ioutil"
 	"mime"
-	"os"
+	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
-	"template"
+	"text/template"
 	"time"
-	"url"
-	"utf8"
+	"unicode/utf8"
 )
 
 type Object interface {
@@ -30,32 +30,32 @@ type Object interface {
 }
 
 type Page struct {
-	Url       string
-	Title     string
-	Created   datastore.Time
-	Modified  datastore.Time
-	Template  string
-	Templates []string `datastore:"-"`
-	Tags      []string
-	Markdown  string `datastore:"-"`
+	Url           string
+	Title         string
+	Created       time.Time
+	Modified      time.Time
+	Template      string
+	Templates     []string `datastore:"-"`
+	Tags          []string
+	Markdown      string `datastore:"-"`
 	MarkdownBytes []byte // strings are limited to 500 chars
-	Rendered  string `datastore:"-"`
+	Rendered      string `datastore:"-"`
 }
 
 func NewPage(url string) *Page {
-	stamp := datastore.SecondsToTime(time.Seconds())
+	stamp := time.Now()
 	title := strings.Replace(url, "_", " ", -1)
 	if slash := strings.LastIndex(url, "/"); slash >= 0 && len(title) > slash+1 {
 		title = title[slash+1:]
 	}
 	title = strings.Title(title)
 	return &Page{
-		Url:      url,
-		Title:    title,
-		Created:  stamp,
-		Modified: stamp,
-		Template: "default",
-		Markdown: "\n",
+		Url:           url,
+		Title:         title,
+		Created:       stamp,
+		Modified:      stamp,
+		Template:      "default",
+		Markdown:      "\n",
 		MarkdownBytes: []byte("\n"),
 	}
 }
@@ -85,8 +85,8 @@ func (p *Page) PostLoad() {
 }
 
 type Template struct {
-	Url      string
-	Contents string `datastore:"-"`
+	Url           string
+	Contents      string `datastore:"-"`
 	ContentsBytes []byte
 }
 
@@ -164,7 +164,7 @@ func (c *Config) PostLoad() {
 }
 
 // the set of all built-in templates
-var builtins *template.Set
+var builtins *template.Template
 
 // if the first arguments match each other, return the last as a string
 func ifEqual(args ...interface{}) string {
@@ -201,11 +201,11 @@ const (
 
 func init() {
 	// assign functions to the templates
-	builtins = new(template.Set)
+	builtins = new(template.Template)
 	builtins.Funcs(template.FuncMap{
 		"ifEqual": ifEqual,
 	})
-	template.SetMust(builtins.ParseTemplateGlob("*.template"))
+	template.Must(builtins.ParseGlob("*.template"))
 
 	http.HandleFunc(viewpage_prefix, viewpage)
 
@@ -226,9 +226,9 @@ func init() {
 	http.HandleFunc(saveconfig_prefix, save)
 }
 
-func getConfig(c appengine.Context, host string) (*Config, os.Error) {
+func getConfig(c appengine.Context, host string) (*Config, error) {
 	hostkey := datastore.NewKey(c, "Host", host+"/", 0, nil)
-	key := datastore.NewKey(c, "Config", host, 0, hostkey)
+	key := datastore.NewKey(c, "Config", "config", 0, hostkey)
 	value := new(Config)
 	err := datastore.Get(c, key, value)
 	if err != nil && err == datastore.ErrNoSuchEntity {
@@ -240,7 +240,7 @@ func getConfig(c appengine.Context, host string) (*Config, os.Error) {
 	return value, nil
 }
 
-func requireEditor(c appengine.Context, host string) (err os.Error) {
+func requireEditor(c appengine.Context, host string) (err error) {
 	if user.IsAdmin(c) {
 		return
 	}
@@ -251,17 +251,17 @@ func requireEditor(c appengine.Context, host string) (err os.Error) {
 	}
 	u := user.Current(c)
 	if u == nil {
-		return os.NewError("Must be logged in")
+		return errors.New("Must be logged in")
 	}
 	for _, elt := range config.Editors {
 		if elt == u.Email {
 			return
 		}
 	}
-	return os.NewError("User " + u.Email + " is not an editor for " + host)
+	return errors.New("User " + u.Email + " is not an editor for " + host)
 }
 
-func render(c appengine.Context, w http.ResponseWriter, host string, page *Page) (err os.Error) {
+func render(c appengine.Context, w http.ResponseWriter, host string, page *Page) (err error) {
 	success := false
 
 	// get the template
@@ -279,13 +279,13 @@ func render(c appengine.Context, w http.ResponseWriter, host string, page *Page)
 	}
 
 	if err != nil || !success {
-		fallback := builtins.Template("fallback.template")
+		fallback := builtins.Lookup("fallback.template")
 		err = fallback.Execute(w, page)
 	}
 	return
 }
 
-func GetKeysList(c appengine.Context, host string, table string) (lst []string, err os.Error) {
+func GetKeysList(c appengine.Context, host string, table string) (lst []string, err error) {
 	hostkey := datastore.NewKey(c, "Host", host+"/", 0, nil)
 	q := datastore.NewQuery(table).Ancestor(hostkey).Order("Url")
 	q.KeysOnly()
@@ -308,33 +308,33 @@ func editlist(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	err := requireEditor(c, r.URL.Host)
 	if err != nil {
-		http.Error(w, err.String(), http.StatusUnauthorized)
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
 	data := new(EditList)
 	if data.Pages, err = GetKeysList(c, r.URL.Host, "Page"); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if data.Templates, err = GetKeysList(c, r.URL.Host, "Template"); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if data.Statics, err = GetKeysList(c, r.URL.Host, "Static"); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	var buf bytes.Buffer
-	if err := builtins.Execute(&buf, "edit-list.template", data); err != nil {
+	if err := builtins.ExecuteTemplate(&buf, "edit-list.template", data); err != nil {
 		panic("Executing edit-list template")
 	}
 
 	page := NewPage("Edit_content")
 	page.Rendered = string(buf.Bytes())
 	if err := render(c, w, r.URL.Host, page); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
@@ -356,7 +356,7 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 	key := datastore.NewKey(c, "Static", static.Key(), 0, hostkey)
 	err := datastore.Get(c, key, static)
 	if err != nil && err != datastore.ErrNoSuchEntity {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	} else if err == nil {
 		static.PostLoad()
@@ -388,13 +388,13 @@ func viewpage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	page.PostLoad()
 	page.Render()
 	if err = render(c, w, r.URL.Host, page); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
@@ -407,7 +407,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	err := requireEditor(c, r.URL.Host)
 	if err != nil {
-		http.Error(w, err.String(), http.StatusUnauthorized)
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -440,7 +440,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 
 	// extract the form data
 	if err := UnmarshalForm(r, value); err != nil {
-		http.Error(w, err.String(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if !value.Validate() {
@@ -454,7 +454,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 	// delete request
 	if strings.HasPrefix(r.FormValue("Submit"), "Delete") {
 		if err = datastore.Delete(c, key); err != nil && err != datastore.ErrNoSuchEntity {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		err = nil
@@ -476,7 +476,7 @@ func save(w http.ResponseWriter, r *http.Request) {
 	}
 	value.PreSave()
 	if _, err = datastore.Put(c, key, value); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	target := "/_edit"
@@ -493,7 +493,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	err := requireEditor(c, r.URL.Host)
 	if err != nil {
-		http.Error(w, err.String(), http.StatusUnauthorized)
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -508,7 +508,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 		form = "edit-page.template"
 		page := NewPage(url)
 		if page.Templates, err = GetKeysList(c, r.URL.Host, "Template"); err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		value = page
@@ -549,7 +549,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 	if err != nil && err == datastore.ErrNoSuchEntity {
 		// default empty entry is fine
 	} else if err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	value.PostLoad()
@@ -574,8 +574,8 @@ func edit(w http.ResponseWriter, r *http.Request) {
 
 	// render the form
 	var buf bytes.Buffer
-	if err := builtins.Execute(&buf, form, value); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+	if err := builtins.ExecuteTemplate(&buf, form, value); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -587,22 +587,22 @@ func edit(w http.ResponseWriter, r *http.Request) {
 	}
 	page.Rendered = string(buf.Bytes())
 	if err := render(c, w, r.URL.Host, page); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
 
-func UnmarshalForm(r *http.Request, val interface{}) (err os.Error) {
+func UnmarshalForm(r *http.Request, val interface{}) (err error) {
 	v := reflect.ValueOf(val)
 	if v.Kind() != reflect.Ptr {
-		return os.NewError("non-pointer passed to UnmarshalForm")
+		return errors.New("non-pointer passed to UnmarshalForm")
 	}
 	if v.IsNil() {
-		return os.NewError("nil pointer passed to UnmarshalForm")
+		return errors.New("nil pointer passed to UnmarshalForm")
 	}
 	s := v.Elem()
 	if s.Kind() != reflect.Struct {
-		return os.NewError("pointer to non-struct passed to UnmarshalForm")
+		return errors.New("pointer to non-struct passed to UnmarshalForm")
 	}
 	t := s.Type()
 	for i, n := 0, t.NumField(); i < n; i++ {
@@ -645,7 +645,7 @@ func UnmarshalForm(r *http.Request, val interface{}) (err os.Error) {
 			}
 		case reflect.Int64:
 			str := strings.TrimSpace(r.FormValue(field.Name))
-			if n, err := strconv.Atoi64(str); err == nil {
+			if n, err := strconv.ParseInt(str, 10, 64); err == nil {
 				value.SetInt(n)
 			}
 		}
@@ -679,14 +679,14 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	err := requireEditor(c, r.URL.Host)
 	if err != nil {
-		http.Error(w, err.String(), http.StatusUnauthorized)
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
 	// headers
 	w.Header()["Content-Type"] = []string{"application/zip"}
 	filename := r.URL.Host + "-backup_" +
-		time.UTC().Format("2006-01-02") + ".zip"
+		time.Now().UTC().Format("2006-01-02") + ".zip"
 	w.Header()["Content-Disposition"] =
 		[]string{`attachment; filename="` + filename + `"`}
 
@@ -701,17 +701,17 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		out, err := z.Create(escapeUrl(page.Url + ".md"))
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		err = page.WriteTo(out)
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -724,17 +724,17 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		out, err := z.Create(escapeUrl(static.Url))
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_, err = out.Write(static.Contents)
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -747,24 +747,24 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		out, err := z.Create(escapeUrl(tmpl.Url + ".template"))
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		_, err = out.Write([]byte(tmpl.Contents))
 		if err != nil {
-			http.Error(w, err.String(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
 	err = z.Close()
 	if err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
@@ -830,27 +830,27 @@ func ParsePage(raw string, url string) (page *Page) {
 
 // Parse a time string as RFC1123, with or without a timezone
 // return as seconds since the epoc
-func parseTime(raw string) datastore.Time {
+func parseTime(raw string) time.Time {
 	raw = strings.TrimSpace(raw)
 
 	// time zone included?
 	if stamp, err := time.Parse(time.RFC1123, raw); err == nil {
-		return datastore.SecondsToTime(stamp.Seconds() + int64(stamp.ZoneOffset))
+		return stamp
 	}
 
 	// time zone is missing, assume UTC
 	if stamp, err := time.Parse("Mon, 02 Jan 2006 15:04:05", raw); err == nil {
-		return datastore.SecondsToTime(stamp.Seconds())
+		return stamp
 	}
 
 	// unrecognized format, fall back to current time
-	return datastore.SecondsToTime(time.Seconds())
+	return time.Now()
 }
 
-func (p *Page) WriteTo(w io.Writer) os.Error {
+func (p *Page) WriteTo(w io.Writer) error {
 	header := p.Title + "\n"
-	header += p.Created.Time().Format(time.RFC1123) + "\n"
-	header += p.Modified.Time().Format(time.RFC1123) + "\n"
+	header += p.Created.Format(time.RFC1123) + "\n"
+	header += p.Modified.Format(time.RFC1123) + "\n"
 	header += p.Template + "\n"
 	header += strings.Join(p.Tags, ",") + "\n"
 	header += "---\n"
@@ -866,10 +866,10 @@ func (p *Page) WriteTo(w io.Writer) os.Error {
 
 type bytebuf []byte
 
-func (b bytebuf) ReadAt(p []byte, off int64) (n int, err os.Error) {
+func (b bytebuf) ReadAt(p []byte, off int64) (n int, err error) {
 	slice := []byte(b)
 	if off >= int64(len(slice)) {
-		return 0, os.NewError("End of file")
+		return 0, errors.New("End of file")
 	}
 	n = copy(p, slice[off:])
 	return n, nil
@@ -879,7 +879,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	err := requireEditor(c, r.URL.Host)
 	if err != nil {
-		http.Error(w, err.String(), http.StatusUnauthorized)
+		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -890,12 +890,12 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 	}
 	raw, err := ioutil.ReadAll(file)
 	if err != nil {
-		http.Error(w, err.String(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	z, err := zip.NewReader(bytebuf(raw), int64(len(raw)))
 	if err != nil {
-		http.Error(w, err.String(), http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
@@ -905,13 +905,13 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 		fp, err := elt.Open()
 		if err != nil {
 			report += "<li>Error opening " + html.EscapeString(name) + ": " +
-				html.EscapeString(err.String()) + "</li>\n"
+				html.EscapeString(err.Error()) + "</li>\n"
 			continue
 		}
 		data, err := ioutil.ReadAll(fp)
 		if err != nil {
 			report += "<li>Error reading " + html.EscapeString(name) + ": " +
-				html.EscapeString(err.String()) + "</li>\n"
+				html.EscapeString(err.Error()) + "</li>\n"
 			continue
 		}
 		fp.Close()
@@ -927,7 +927,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 			key := datastore.NewKey(c, "Page", page.Key(), 0, hostkey)
 			page.PreSave()
 			if _, err = datastore.Put(c, key, page); err != nil {
-				http.Error(w, err.String(), http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			report += "<li>Page: " + html.EscapeString(url) + "</li>\n"
@@ -941,7 +941,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 			key := datastore.NewKey(c, "Template", tmpl.Key(), 0, hostkey)
 			tmpl.PreSave()
 			if _, err = datastore.Put(c, key, tmpl); err != nil {
-				http.Error(w, err.String(), http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			report += "<li>Template: " + html.EscapeString(url) + "</li>\n"
@@ -955,7 +955,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 			key := datastore.NewKey(c, "Static", static.Key(), 0, hostkey)
 			static.PreSave()
 			if _, err = datastore.Put(c, key, static); err != nil {
-				http.Error(w, err.String(), http.StatusInternalServerError)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			report += "<li>Static: " + html.EscapeString(url) + "</li>\n"
@@ -967,7 +967,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 	page := NewPage("Imported_data_report")
 	page.Rendered = report
 	if err = render(c, w, r.URL.Host, page); err != nil {
-		http.Error(w, err.String(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 }
