@@ -9,6 +9,7 @@ import (
 	"errors"
 	"github.com/russross/blackfriday"
 	"html"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"mime"
@@ -17,7 +18,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 	"unicode/utf8"
 )
@@ -39,7 +39,7 @@ type Page struct {
 	Tags          []string
 	Markdown      string `datastore:"-"`
 	MarkdownBytes []byte // strings are limited to 500 chars
-	Rendered      string `datastore:"-"`
+	Rendered      template.HTML `datastore:"-"`
 }
 
 func NewPage(url string) *Page {
@@ -61,7 +61,7 @@ func NewPage(url string) *Page {
 }
 
 func (p *Page) Render() {
-	p.Rendered = string(blackfriday.MarkdownCommon([]byte(p.Markdown)))
+	p.Rendered = template.HTML(blackfriday.MarkdownCommon([]byte(p.Markdown)))
 }
 
 func (p *Page) Validate() bool {
@@ -201,7 +201,7 @@ const (
 
 func init() {
 	// assign functions to the templates
-	builtins = new(template.Template)
+	builtins = template.New("root")
 	builtins.Funcs(template.FuncMap{
 		"ifEqual": ifEqual,
 	})
@@ -289,7 +289,8 @@ func GetKeysList(c appengine.Context, host string, table string) (lst []string, 
 	hostkey := datastore.NewKey(c, "Host", host+"/", 0, nil)
 	q := datastore.NewQuery(table).Ancestor(hostkey).Order("Url")
 	q.KeysOnly()
-	keys, err := q.GetAll(c, nil)
+	dummy := []datastore.PropertyList{}
+	keys, err := q.GetAll(c, &dummy)
 	if err != nil {
 		return
 	}
@@ -332,7 +333,7 @@ func editlist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := NewPage("Edit_content")
-	page.Rendered = string(buf.Bytes())
+	page.Rendered = template.HTML(buf.Bytes())
 	if err := render(c, w, r.URL.Host, page); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -585,7 +586,7 @@ func edit(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == editconfig_prefix {
 		page.Title = "Configuration"
 	}
-	page.Rendered = string(buf.Bytes())
+	page.Rendered = template.HTML(buf.Bytes())
 	if err := render(c, w, r.URL.Host, page); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -694,8 +695,8 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 	hostkey := datastore.NewKey(c, "Host", r.URL.Host+"/", 0, nil)
 
 	// pages
-	var page Page
 	for iter := datastore.NewQuery("Page").Ancestor(hostkey).Run(c); ; {
+		var page Page
 		_, err := iter.Next(&page)
 		if err == datastore.Done {
 			break
@@ -704,6 +705,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		page.PostLoad()
 		out, err := z.Create(escapeUrl(page.Url + ".md"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -717,8 +719,8 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// statics
-	var static Static
 	for iter := datastore.NewQuery("Static").Ancestor(hostkey).Run(c); ; {
+		var static Static
 		_, err := iter.Next(&static)
 		if err == datastore.Done {
 			break
@@ -727,6 +729,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		static.PostLoad()
 		out, err := z.Create(escapeUrl(static.Url))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -740,8 +743,8 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// templates
-	var tmpl Template
 	for iter := datastore.NewQuery("Template").Ancestor(hostkey).Run(c); ; {
+		var tmpl Template
 		_, err := iter.Next(&tmpl)
 		if err == datastore.Done {
 			break
@@ -750,6 +753,7 @@ func exportpages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		tmpl.PostLoad()
 		out, err := z.Create(escapeUrl(tmpl.Url + ".template"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -965,7 +969,7 @@ func importpages(w http.ResponseWriter, r *http.Request) {
 	}
 	report += "</ul>\n"
 	page := NewPage("Imported_data_report")
-	page.Rendered = report
+	page.Rendered = template.HTML(report)
 	if err = render(c, w, r.URL.Host, page); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

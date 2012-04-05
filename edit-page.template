@@ -1,8 +1,8 @@
 <form action="/_savepage" method="post">
-<input type="hidden" name="Url" value="{{.Url | html}}" />
+<input type="hidden" name="Url" value="{{.Url}}" />
 
 <p>
-  Title: <input type="text" name="Title" size="70" value="{{.Title | html}}" />
+  Title: <input type="text" name="Title" size="70" value="{{.Title}}" />
 </p>
 
 <p>
@@ -16,16 +16,16 @@
 
 <p>
   Template: <select name="Template">{{$selected := .Template}}{{range .Templates}}
-  <option value="{{. | html}}"{{ifEqual . $selected ` selected="selected"`}}>{{. | html}}</option>{{end}}
+  <option value="{{.}}"{{ifEqual . $selected ` selected="selected"`}}>{{.}}</option>{{end}}
   </select>
 </p>
 
 <p>
-  Tags: <input type="text" name="Tags" size="80" value="{{range $i, $elt := .Tags}}{{if $i}},{{end}}{{. | html}}{{end}}" />
+  Tags: <input type="text" name="Tags" size="80" value="{{range $i, $elt := .Tags}}{{if $i}},{{end}}{{.}}{{end}}" />
 </p>
 
 <h2>Contents</h2>
-<textarea name="Markdown" rows="40" cols="80">{{.Markdown | html}}</textarea>
+<textarea name="Markdown" rows="40" cols="80">{{.Markdown}}</textarea>
 
 <p>
   <input type="submit" name="Submit" value="Save" />
