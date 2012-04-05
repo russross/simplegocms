@@ -557,18 +557,8 @@ func edit(w http.ResponseWriter, r *http.Request) {
 
 	// for statics, try to decide if it is text or not
 	if strings.HasPrefix(r.URL.Path, editstatic_prefix) {
-		text := true
 		static := value.(*Static)
-		for i, n := 0, len(static.Contents); i < n; {
-			r, s := utf8.DecodeRune(static.Contents[i:])
-			if r == utf8.RuneError {
-				text = false
-				break
-			}
-			i += s
-		}
-
-		if text {
+		if utf8.Valid(static.Contents) {
 			static.Text = string(static.Contents)
 		}
 	}
